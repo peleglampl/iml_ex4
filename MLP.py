@@ -47,19 +47,22 @@ class MLP(nn.Module):
             hidden_dim (int): The hidden layer dimension
             output_dim (int): The output dimension, should match the number of classes in the dataset
         """
+        self.linear_layers = nn.ModuleList()
         layers = []
-        layers.append(nn.Linear(2, hidden_dim))  # input layer
+
+        layers.append(nn.Linear(2, hidden_dim))
+        self.linear_layers.append(layers[-1])
+        layers.append(nn.BatchNorm1d(hidden_dim))
         layers.append(nn.ReLU())
 
-        # the hidden layers:
         for _ in range(num_hidden_layers - 1):
             layers.append(nn.Linear(hidden_dim, hidden_dim))
+            self.linear_layers.append(layers[-1])
             layers.append(nn.BatchNorm1d(hidden_dim))
             layers.append(nn.ReLU())
 
-        # the output layer:
         layers.append(nn.Linear(hidden_dim, output_dim))
-        self.network = nn.Sequential(*layers)  # chains the layers together and runs them one after the other
+        self.network = nn.Sequential(*layers)
 
     def forward(self, x):
         """
@@ -92,10 +95,9 @@ def train(train_dataset, val_dataset, test_dataset, model, lr=0.001, epochs=50, 
     test_losses = []
 
     train_batch_losses = []
-    tracked_layers = [0, 30, 60, 90, 95, 99]  # layers to monitor
-    linear_layers = [layer for layer in model.network[:-1] if isinstance(layer, nn.Linear)]
-    epoch_sums = {layer: 0.0 for layer in tracked_layers}
-    epoch_means = {layer: [] for layer in tracked_layers}
+    tracked_layers = [0, 30, 60, 90, 95, 99]
+    epoch_sums = {i: 0.0 for i in tracked_layers}
+    epoch_means = {i: [] for i in tracked_layers}
 
     for ep in range(epochs):
         model.train()  # set model to training mode
@@ -113,13 +115,12 @@ def train(train_dataset, val_dataset, test_dataset, model, lr=0.001, epochs=50, 
             loss.backward()
 
             # 6.2.5: adding monitoring gradients:
-            for layer_idx in tracked_layers:
-                W = linear_layers[layer_idx].weight
+            for i in tracked_layers:
+                W = model.linear_layers[i].weight
                 if W.grad is not None:
-                    grad_mag = (W.grad ** 2).sum().item()  # ||grad||_2^2
-                    epoch_sums[layer_idx] += grad_mag
+                    epoch_sums[i] += (W.grad ** 2).sum().item()
 
-            optimizer.step()  # update weights
+            optimizer.step()  # update weights to minimize loss
             train_batch_losses.append(loss.item())
             epoch_train_loss += loss.item() * x.size(0)
             _, predicted = torch.max(predictions, 1)
@@ -128,10 +129,9 @@ def train(train_dataset, val_dataset, test_dataset, model, lr=0.001, epochs=50, 
 
         num_batches = len(trainloader)
 
-        for layer_idx in tracked_layers:
-            mean_grad = epoch_sums[layer_idx] / num_batches
-            epoch_means[layer_idx].append(mean_grad)
-            epoch_sums[layer_idx] = 0.0
+        for i in tracked_layers:
+            epoch_means[i].append(epoch_sums[i] / num_batches)
+            epoch_sums[i] = 0.0
 
         # compute epoch loss and accuracy
         train_loss = epoch_train_loss / epoch_train_samples
@@ -481,12 +481,12 @@ def plot_accuracy_vs_width(results, fixed_depth):
     test_acc = [r["final_test_acc"] for r in filtered]
 
     plt.figure()
-    plt.plot(widths, train_acc, marker='o', label='Train')
-    plt.plot(widths, val_acc, marker='o', label='Validation')
-    plt.plot(widths, test_acc, marker='o', label='Test')
+    plt.plot(widths, train_acc, marker='o', linewidth=2, label='Train')
+    plt.plot(widths, val_acc, marker='o', linewidth=2, label='Validation')
+    plt.plot(widths, test_acc, marker='o', linewidth=2, label='Test')
     plt.xlabel("Number of Neurons in Hidden Layers")
     plt.ylabel("Accuracy")
-    plt.title(f"Accuracy vs Width (Depth = {fixed_depth})")
+    plt.title("Accuracy vs Width (Depth = 6)")
     plt.legend()
     plt.grid(True)
     plt.show()
@@ -522,11 +522,8 @@ def train_several_mlp(train_dataset, val_dataset, test_dataset):
     plot_accuracy_vs_depth(results, fixed_width=16)
     plot_accuracy_vs_width(results, fixed_depth=6)
 
+
 # Monitoring Gradients:
-# 100 hidden layers, 4 neurons each, lr=0.001, batch size=256, epochs=10
-
-
-# grad_magnitudes = ||  grad ||
 def monitor_gradients(train_dataset, val_dataset, test_dataset):
     depth = 100
     width = 4
@@ -549,6 +546,7 @@ def monitor_gradients(train_dataset, val_dataset, test_dataset):
     plt.xlabel("Epoch")
     plt.ylabel("Mean Gradient Magnitude")
     plt.title("Gradient Magnitude vs Epoch")
+    # plt.yscale('log')
     plt.legend()
     plt.show()
 
@@ -567,6 +565,7 @@ if __name__ == '__main__':
     # batch_size_experiment(train_dataset, val_dataset, test_dataset)
     # train_several_mlp(train_dataset, val_dataset, test_dataset)
     monitor_gradients(train_dataset, val_dataset, test_dataset)
+
 
 
     # # Example of training a single MLP model

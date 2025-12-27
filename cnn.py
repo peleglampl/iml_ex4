@@ -6,6 +6,8 @@ import torchvision
 from tqdm import tqdm
 from torchvision import transforms
 import numpy as np
+from xgboost import XGBClassifier
+
 
 class ResNet18(nn.Module):
     def __init__(self, pretrained=False, probing=False):
@@ -28,8 +30,9 @@ class ResNet18(nn.Module):
 
     def forward(self, x):
         features = self.resnet18(x)
-        ### YOUR CODE HERE ###
-        pass
+        logits = self.logistic_regression(features)  # Binary classification- output single logit
+        return logits
+
 
 def get_loaders(path, transform, batch_size):
     """
@@ -57,7 +60,19 @@ def compute_accuracy(model, data_loader, device):
     :return: The accuracy of the model on the data in data_loader
     """
     model.eval()
-    ### YOUR CODE HERE ###
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for imgs, labels in data_loader:
+            imgs = imgs.to(device)
+            labels = labels.float().unsqueeze(1).to(device)
+
+            logits = model(imgs)
+            preds = (torch.sigmoid(logits) >= 0.5).float()
+            correct += (preds == labels).sum().item()
+            total += labels.size(0)
+    acc = correct / total
+    return acc
 
 def run_training_epoch(model, criterion, optimizer, train_loader, device):
     """
@@ -70,9 +85,17 @@ def run_training_epoch(model, criterion, optimizer, train_loader, device):
     :return: The average loss for the epoch.
     """
     model.train()
+    total_loss = 0.0
     for (imgs, labels) in tqdm(train_loader, total=len(train_loader)):
-        ### YOUR CODE HERE ###
-        return
+        imgs = imgs.to(device)
+        labels = labels.float().unsqueeze(1).to(device)
+        logits = model(imgs)
+        loss = criterion(logits, labels)
+        total_loss += loss.item()
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+    return total_loss / len(train_loader)
 
 # Set the random seed for reproducibility
 torch.manual_seed(0)
@@ -81,15 +104,15 @@ torch.manual_seed(0)
 # From Scratch
 model = ResNet18(pretrained=False, probing=False)
 # Linear probing
-# model = ResNet18(pretrained=True, probing=True)
+model = ResNet18(pretrained=True, probing=True)
 # Fine-tuning
-# model = ResNet18(pretrained=True, probing=False)
+model = ResNet18(pretrained=True, probing=False)
 
 transform = model.transform
-batch_size = 32
+batch_size = 32  # batch size of 32
 num_of_epochs = 50
 learning_rate = 0.0001
-path = 'PATH_TO_whicfaceisreal' # For example '/cs/usr/username/whichfaceisreal/'
+path = "C:\Users\peleg\IML\whichfaceisreal" # For example '/cs/usr/username/whichfaceisreal/'
 train_loader, val_loader, test_loader = get_loaders(path, transform, batch_size)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -110,8 +133,69 @@ for epoch in range(num_of_epochs):
     print(f'Epoch {epoch + 1}/{num_of_epochs}, Loss: {loss:.4f}, Val accuracy: {val_acc:.4f}')
     # Stopping condition
     ### YOUR CODE HERE ###
+    if val_acc >= 0.99:
+        print("Early stopping as validation accuracy reached 99%")
+        break
 
 # Compute the test accuracy
 test_acc = compute_accuracy(model, test_loader, device)
+
+### Bonus part: Linear Probing based on sklearn
+def linear_probing(train_loader, test_loader, device):
+    # Extract features using the pretrained ResNet18
+    model = ResNet18(weights=ResNet18_Weights.DEFAULT)
+    model.fc = nn.Identity()  # Remove the final classification layer
+    model = model.to(device)
+    model.eval()
+
+    # extract the features
+    def extract_features(data_loader):
+        features = []
+        labels = []
+        with torch.no_grad():
+            for imgs, lbls in data_loader:
+                imgs = imgs.to(device)
+                feats = model(imgs)
+                features.append(feats.cpu().numpy())
+                labels.append(lbls.cpu().numpy())
+        features = np.concatenate(features, axis=0)
+        labels = np.concatenate(labels, axis=0)
+        return features, labels
+
+    X_train, y_train = extract_features(train_loader)
+    X_test, y_test = extract_features(test_loader)
+
+    clf = self.logistic_regression = nn.Linear(in_features_dim, 1)
+    clf.fit(X_train, y_train)
+
+    acc = clf.score(X_test, y_test)
+    print(f'Linear Probing Test Accuracy: {acc:.4f}')
+
+
+
+def fine_tuning(train_loader, val_loader, test_loader, device):
+    learning_rates = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5]
+
+    for lr in learning_rates:
+        print("fine tuning with learning rate: ", lr)
+
+        model = ResNet18(pretrained=True, probing=False)
+        model = model.to(device)
+
+        criterion = torch.nn.BCEWithLogitsLoss()  # Binary Cross Entropy Loss
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)  # Adam optimizer
+
+        # train one epoch
+        loss = run_training_epoch(model, criterion, optimizer, train_loader, device)
+
+        # evaluate accuracy
+        val_acc = compute_accuracy(model, val_loader, device)
+        train_acc = compute_accuracy(model, train_loader, device)
+        test_acc = compute_accuracy(model, test_loader, device)
+
+        print(f"LR={lr} | Loss={loss:.4f} | "
+              f"Train Acc={train_acc:.4f} | "
+              f"Val Acc={val_acc:.4f} | "
+              f"Test Acc={test_acc:.4f}")
 
 
